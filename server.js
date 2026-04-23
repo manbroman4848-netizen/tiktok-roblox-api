@@ -16,8 +16,10 @@ app.get('/likes/:username', async (req, res) => {
         if (!state) {
             state = {
                 likeCount: 0,
+                followCount: 0,
                 lastGift: null,
-                lastGiftTime: 0
+                lastGiftTime: 0,
+                giftProcessed: false
             };
             connectionState.set(username, state);
         }
@@ -37,16 +39,23 @@ app.get('/likes/:username', async (req, res) => {
                 console.log(`${username} likes: ${state.likeCount}`);
             });
             
-            connection.on('gift', (data) => {
-                state.lastGift = {
-                    giftName: data.giftName,
-                    repeatCount: data.repeatCount || 1
-                };
-                state.lastGiftTime = Date.now();
-                console.log(`${username} gift: ${data.giftName} x${data.repeatCount || 1}`);
+            connection.on('follow', (data) => {
+                state.followCount = (state.followCount || 0) + 1;
+                console.log(`${username} new follow! Total: ${state.followCount}`);
             });
             
-            // Auto-disconnect when streamer ends live
+            connection.on('gift', (data) => {
+                if (!state.giftProcessed) {
+                    state.lastGift = {
+                        giftName: data.giftName,
+                        repeatCount: data.repeatCount || 1
+                    };
+                    state.lastGiftTime = Date.now();
+                    state.giftProcessed = true;
+                    console.log(`${username} gift: ${data.giftName} x${data.repeatCount || 1}`);
+                }
+            });
+            
             connection.on('disconnected', () => {
                 console.log(`${username} stream ended, cleaning up...`);
                 activeConnections.delete(username);
@@ -57,20 +66,28 @@ app.get('/likes/:username', async (req, res) => {
             console.log(`Connected to ${username}'s live`);
         }
         
-        res.json({ 
+        // Return state then clear gift flag so it only sends once
+        const response = { 
             likeCount: state.likeCount,
+            followCount: state.followCount || 0,
             lastGift: state.lastGift,
             username: username,
             status: 'connected'
-        });
+        };
+        
+        // Clear gift after sending so it doesn't repeat forever
+        state.lastGift = null;
+        state.giftProcessed = false;
+        
+        res.json(response);
         
     } catch (error) {
         console.error(`Error: ${error.message}`);
-        // Clean up failed connection
         activeConnections.delete(username);
         connectionState.delete(username);
         res.json({ 
             likeCount: 0,
+            followCount: 0,
             lastGift: null,
             username: username,
             status: 'error',
@@ -94,7 +111,6 @@ app.get('/stop/:username', (req, res) => {
         console.log(`Disconnected from ${username}'s live`);
         res.json({ status: 'disconnected' });
     } else {
-        // Still clean up state even if no active connection
         connectionState.delete(username);
         res.json({ status: 'not connected' });
     }
