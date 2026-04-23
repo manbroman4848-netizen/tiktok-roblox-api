@@ -26,9 +26,7 @@ app.get('/likes/:username', async (req, res) => {
             connection = new WebcastPushConnection(username);
             activeConnections.set(username, connection);
             
-            // Debug ALL events
             connection.on('like', (data) => {
-                console.log('LIKE EVENT:', JSON.stringify(data));
                 if (data.likeCount !== undefined) {
                     state.likeCount = data.likeCount;
                 } else if (data.totalLikes !== undefined) {
@@ -36,24 +34,23 @@ app.get('/likes/:username', async (req, res) => {
                 } else if (typeof data === 'number') {
                     state.likeCount = data;
                 }
+                console.log(`${username} likes: ${state.likeCount}`);
             });
             
             connection.on('gift', (data) => {
-                console.log('GIFT EVENT:', JSON.stringify(data));
                 state.lastGift = {
                     giftName: data.giftName,
                     repeatCount: data.repeatCount || 1
                 };
                 state.lastGiftTime = Date.now();
+                console.log(`${username} gift: ${data.giftName} x${data.repeatCount || 1}`);
             });
             
-            // Catch all other events
-            connection.on('roomUser', (data) => {
-                console.log('ROOM USER EVENT:', JSON.stringify(data));
-            });
-            
-            connection.on('chat', (data) => {
-                console.log('CHAT EVENT:', JSON.stringify(data));
+            // Auto-disconnect when streamer ends live
+            connection.on('disconnected', () => {
+                console.log(`${username} stream ended, cleaning up...`);
+                activeConnections.delete(username);
+                connectionState.delete(username);
             });
             
             await connection.connect();
@@ -69,6 +66,9 @@ app.get('/likes/:username', async (req, res) => {
         
     } catch (error) {
         console.error(`Error: ${error.message}`);
+        // Clean up failed connection
+        activeConnections.delete(username);
+        connectionState.delete(username);
         res.json({ 
             likeCount: 0,
             lastGift: null,
@@ -84,12 +84,18 @@ app.get('/stop/:username', (req, res) => {
     const connection = activeConnections.get(username);
     
     if (connection) {
-        connection.disconnect();
+        try {
+            connection.disconnect();
+        } catch (e) {
+            console.error(`Disconnect error: ${e.message}`);
+        }
         activeConnections.delete(username);
         connectionState.delete(username);
         console.log(`Disconnected from ${username}'s live`);
         res.json({ status: 'disconnected' });
     } else {
+        // Still clean up state even if no active connection
+        connectionState.delete(username);
         res.json({ status: 'not connected' });
     }
 });
